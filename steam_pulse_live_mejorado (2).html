@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SteamPulse PRO+ (Fixed Search)</title>
+
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1"></script>
+
+<style>
+body{background:#0f172a;color:#fff}
+.card{background:#1e293b;border-radius:16px;padding:15px;margin-bottom:15px}
+.search-container{position:relative}
+.search-results{position:absolute;width:100%;z-index:1000;max-height:200px;overflow:auto}
+.search-item:hover{background:#38bdf8;color:#000;cursor:pointer}
+.chart-container{position:relative}
+.chart-small{height:150px}
+.chart-medium{height:300px}
+.chart-full{height:500px}
+.fullscreen{position:fixed!important;top:0;left:0;width:100%!important;height:100%!important;z-index:9999;background:#0f172a;padding:20px}
+</style>
+</head>
+<body>
+
+<div class="container py-4">
+
+<div class="search-container mb-3">
+<input id="search" class="form-control" placeholder="Buscar juego...">
+<div id="results" class="search-results bg-dark d-none"></div>
+</div>
+
+<div class="card"><h6>⭐ Favoritos</h6><div id="favorites"></div></div>
+<div class="card"><h6>🎮 Juegos activos</h6><div id="activeGames"></div></div>
+
+<div class="card">
+<button onclick="setChartSize('small')">Pequeño</button>
+<button onclick="setChartSize('medium')">Mediano</button>
+<button onclick="setChartSize('full')">Completo</button>
+<button onclick="toggleFullscreen()">Fullscreen</button>
+<button onclick="resetZoom()">Reset Zoom</button>
+</div>
+
+<div id="chartWrapper" class="card chart-container chart-medium">
+<canvas id="chart"></canvas>
+</div>
+
+</div>
+
+<script>
+const API_SEARCH="https://store.steampowered.com/api/storesearch/?l=spanish&cc=US&term=";
+const API_PLAYERS="https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?appid=";
+
+const PROXIES=[
+ (url)=>url,
+ (url)=>"https://api.allorigins.win/raw?url="+encodeURIComponent(url),
+ (url)=>"https://corsproxy.io/?"+encodeURIComponent(url)
+];
+
+let chart,datasetsMap={},labels=[];
+
+async function fetchSteam(url){
+ for(let p of PROXIES){
+  try{
+   let r=await fetch(p(url));
+   let t=await r.text();
+   return JSON.parse(t);
+  }catch{}
+ }
+ return null;
+}
+
+window.addEventListener("DOMContentLoaded",()=>{
+ const input=document.getElementById("search");
+ const results=document.getElementById("results");
+
+ input.addEventListener("input",debounce(async e=>{
+  let term=e.target.value.trim();
+  if(term.length<3){results.classList.add("d-none");return;}
+
+  const data=await fetchSteam(API_SEARCH+term);
+
+  // 🔥 FIX: validación segura
+  if(!data || !data.items || !Array.isArray(data.items)){
+   results.innerHTML="<div class='p-2'>Sin resultados</div>";
+   results.classList.remove("d-none");
+   return;
+  }
+
+  results.innerHTML="";
+
+  data.items.forEach(g=>{
+   const div=document.createElement("div");
+   div.className="search-item p-2";
+   div.textContent=g.name || "Juego sin nombre";
+   div.onclick=()=>{
+    addGame(g);
+    results.classList.add("d-none");
+   };
+   results.appendChild(div);
+  });
+
+  results.classList.remove("d-none");
+ },500));
+
+ initChart();
+});
+
+function addGame(game){
+ if(!game || !game.id) return;
+ if(datasetsMap[game.id]) return;
+
+ datasetsMap[game.id]={label:game.name,data:[],borderColor:'#38bdf8'};
+ updateChart();
+}
+
+function initChart(){
+ chart=new Chart(document.getElementById("chart"),{
+  type:"line",
+  data:{labels,datasets:[]},
+  options:{
+   responsive:true,maintainAspectRatio:false,
+   plugins:{zoom:{pan:{enabled:true},zoom:{wheel:{enabled:true}}}}
+  }
+ });
+}
+
+function updateChart(){
+ chart.data.datasets=Object.values(datasetsMap);
+ chart.update();
+}
+
+function setChartSize(size){
+ const wrapper=document.getElementById("chartWrapper");
+ wrapper.classList.remove("chart-small","chart-medium","chart-full");
+ wrapper.classList.add("chart-"+size);
+}
+
+function toggleFullscreen(){
+ document.getElementById("chartWrapper").classList.toggle("fullscreen");
+}
+
+function resetZoom(){ if(chart) chart.resetZoom(); }
+
+function debounce(fn,d){let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),d)}}
+
+// ✅ TESTS
+console.assert(typeof fetchSteam === "function","fetchSteam debe existir");
+console.assert(Array.isArray(PROXIES),"PROXIES debe ser array");
+</script>
+
+</body>
+</html>

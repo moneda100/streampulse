@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SteamPulse PRO+ (Ultimate)</title>
+
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1"></script>
+
+<style>
+body{background:#0f172a;color:#ffffff}
+*{color:#ffffff}
+input,.form-control{background:#1e293b;color:#fff;border:1px solid #334155}
+.card{background:#1e293b;border-radius:16px;padding:15px;margin-bottom:15px}
+.search-container{position:relative}
+.search-results{position:absolute;width:100%;z-index:1000;max-height:200px;overflow:auto}
+.search-item:hover{background:#38bdf8;color:#000;cursor:pointer}
+
+.chart-container{position:relative;width:100%}
+.chart-small{height:150px}
+.chart-medium{height:300px}
+.chart-full{height:500px}
+
+.fullscreen{position:fixed!important;top:0;left:0;width:100%!important;height:100%!important;z-index:9999;background:#0f172a;padding:20px}
+</style>
+</head>
+<body>
+
+<div class="container py-4">
+
+<div class="search-container mb-3">
+<div class="input-group">
+<input id="search" class="form-control" placeholder="Buscar juego...">
+<button id="toggleResults" class="btn btn-secondary">▼</button>
+</div>
+<div id="results" class="search-results bg-dark d-none"></div>
+</div>
+
+<div class="card"><h6>⭐ Favoritos</h6><div id="favorites"></div></div>
+<div class="card"><h6>🎮 Juegos activos</h6><div id="activeGames"></div></div>
+
+<div class="card">
+<h6>📐 Controles</h6>
+<button onclick="setChartSize('small')" class="btn btn-sm btn-outline-info">Pequeño</button>
+<button onclick="setChartSize('medium')" class="btn btn-sm btn-outline-info">Mediano</button>
+<button onclick="setChartSize('full')" class="btn btn-sm btn-outline-info">Completo</button>
+<button onclick="toggleFullscreen()" class="btn btn-sm btn-warning">Fullscreen</button>
+<button onclick="resetZoom()" class="btn btn-sm btn-success">Reset Zoom</button>
+</div>
+
+<div id="chartWrapper" class="card chart-container chart-medium">
+<canvas id="chart"></canvas>
+</div>
+
+</div>
+
+<script>
+const API_SEARCH="https://store.steampowered.com/api/storesearch/?l=spanish&cc=US&term=";
+const API_PLAYERS="https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?appid=";
+
+const COLORS=["#38bdf8","#f472b6","#34d399","#facc15","#fb7185","#a78bfa"];
+
+const PROXIES=[
+ (url)=>url,
+ (url)=>"https://api.allorigins.win/raw?url="+encodeURIComponent(url),
+ (url)=>"https://corsproxy.io/?"+encodeURIComponent(url)
+];
+
+let chart,datasetsMap={},labels=[],interval=null;
+let favorites=JSON.parse(localStorage.getItem("favGames")||"[]");
+let settings=JSON.parse(localStorage.getItem("settings")||"{}");
+
+function saveSettings(){
+ localStorage.setItem("settings",JSON.stringify(settings));
+}
+
+function saveFavorites(){
+ localStorage.setItem("favGames",JSON.stringify(favorites));
+ renderFavorites();
+}
+
+function renderFavorites(){
+ const box=document.getElementById("favorites"); box.innerHTML="";
+ favorites.forEach((g,i)=>{
+  const div=document.createElement("div");
+  div.innerHTML=`<button class='btn btn-sm btn-outline-info'>${g.name}</button> <button class='btn btn-sm btn-danger'>✕</button>`;
+  div.querySelector(".btn-outline-info").onclick=()=>addGame(g);
+  div.querySelector(".btn-danger").onclick=()=>{favorites.splice(i,1);saveFavorites();};
+  box.appendChild(div);
+ });
+}
+
+function renderActive(){
+ const box=document.getElementById("activeGames"); box.innerHTML="";
+ Object.entries(datasetsMap).forEach(([id,g])=>{
+  const div=document.createElement("div");
+  div.innerHTML=`${g.label} <input type='color' value='${g.borderColor}'> <button>X</button>`;
+  div.querySelector("button").onclick=()=>{delete datasetsMap[id];updateChart();renderActive();};
+  div.querySelector("input").oninput=e=>{
+   g.borderColor=e.target.value; g.backgroundColor=e.target.value;
+   settings.colors=settings.colors||{};
+   settings.colors[id]=e.target.value;
+   saveSettings();
+   updateChart();
+  };
+  box.appendChild(div);
+ });
+}
+
+async function fetchSteam(url){
+ for(let p of PROXIES){try{let r=await fetch(p(url));let t=await r.text();return JSON.parse(t);}catch{}}
+ return null;
+}
+
+window.addEventListener("DOMContentLoaded",()=>{
+ const input=document.getElementById("search"),results=document.getElementById("results");
+
+ input.addEventListener("input",debounce(async e=>{
+  let term=e.target.value.trim(); if(term.length<3)return;
+  let data=await fetchSteam(API_SEARCH+term);
+  if(!data)return;
+  results.innerHTML="";
+  data.items.forEach(g=>{
+   let div=document.createElement("div");
+   div.className="search-item p-2";
+   div.textContent=g.name;
+   div.onclick=()=>{addGame(g);results.classList.add("d-none");};
+   results.appendChild(div);
+  });
+  results.classList.remove("d-none");
+ },500));
+
+ initChart(); renderFavorites();
+
+ if(settings.size) setChartSize(settings.size);
+});
+
+function addGame(game){
+ if(datasetsMap[game.id]) return;
+ let color=settings.colors?.[game.id]||COLORS[Object.keys(datasetsMap).length%COLORS.length];
+ datasetsMap[game.id]={label:game.name,data:[],borderColor:color,backgroundColor:color};
+ updateChart(); renderActive();
+ if(!interval){update(); interval=setInterval(update,30000);} }
+
+function initChart(){
+ chart=new Chart(document.getElementById("chart"),{
+  type:"line",
+  data:{labels,datasets:[]},
+  options:{
+   responsive:true,maintainAspectRatio:false,
+   plugins:{zoom:{
+     pan:{enabled:true,mode:'x'},
+     zoom:{wheel:{enabled:true},pinch:{enabled:true},mode:'x'}
+   }}
+  }
+ });
+}
+
+function updateChart(){ chart.data.datasets=Object.values(datasetsMap); chart.update(); }
+
+async function update(){
+ labels.push(new Date().toLocaleTimeString());
+ for(let id in datasetsMap){
+  let d=await fetchSteam(API_PLAYERS+id);
+  datasetsMap[id].data.push(d?.response?.player_count||0);
+ }
+ if(labels.length>20) labels.shift();
+ updateChart(); renderActive();
+}
+
+// 🔥 tamaño REAL corregido
+function setChartSize(size){
+ const wrapper=document.getElementById("chartWrapper");
+ wrapper.classList.remove("chart-small","chart-medium","chart-full");
+ wrapper.classList.add("chart-"+size);
+ settings.size=size; saveSettings();
+}
+
+// 🔥 fullscreen
+function toggleFullscreen(){
+ const el=document.getElementById("chartWrapper");
+ el.classList.toggle("fullscreen");
+}
+
+// 🔥 reset zoom
+function resetZoom(){ chart.resetZoom(); }
+
+function debounce(fn,d){let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),d)}}
+</script>
+
+</body>
+</html>
